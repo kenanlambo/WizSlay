@@ -1,0 +1,45 @@
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    paths: ['**.zip']
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find the game project
+        run: |
+          set -e
+          best=""; bestv=-1
+          while IFS= read -r z; do
+            v=$(unzip -p "$z" '*app/build.gradle.kts' 2>/dev/null | grep -oP 'versionCode\s*=\s*\K[0-9]+' | head -1 || true)
+            if [ -n "$v" ] && [ "$v" -gt "$bestv" ]; then bestv=$v; best=$z; fi
+          done < <(find . -name '*.zip' -not -path './.git/*')
+          if [ -n "$best" ]; then
+            echo "Using $best (versionCode $bestv)"
+            mkdir -p work && unzip -q "$best" -d work
+            root=$(dirname "$(find work -name settings.gradle.kts | head -1)")
+          else
+            root=$(dirname "$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)")
+          fi
+          [ -f "$root/app/build.gradle.kts" ] || { echo "No game project found. Upload emberwake-android.zip to the repo."; exit 1; }
+          echo "ROOT=$root" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android 16 SDK
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Build APK
+        run: gradle -p "$ROOT" :app:assembleRelease --no-daemon --stacktrace
+      - name: Rename
+        run: cp "$ROOT/app/build/outputs/apk/release/app-release.apk" Emberwake.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Emberwake-apk
+          path: Emberwake.apk
